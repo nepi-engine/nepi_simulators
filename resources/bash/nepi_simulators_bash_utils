@@ -1,0 +1,173 @@
+#!/bin/bash
+
+##
+## Copyright (c) 2024 Numurus <https://www.numurus.com>.
+##
+## This file is part of nepi setup tools (nepi_setup) repo
+## (see https://github.com/nepi-engine/nepi_setup)
+##
+## License: nepi setup tools are licensed under the "Numurus Software License",
+## which can be found at: <https://numurus.com/wp-content/uploads/Numurus-Software-License-Terms.pdf>
+##
+## Redistributions in source code must retain this top-level comment block.
+## Plagiarizing this software to sidestep the license obligations is illegal.
+##
+## Contact Information:
+## ====================
+## - mailto:nepi@numurus.com
+##
+
+# Shell functions for running the NEPI simulators in Docker on this computer.
+# The simulators themselves (Gazebo and MuJoCo, on Ubuntu 20.04) are in the
+# simulator image; these commands only mount the NEPI device's storage, hand
+# it, the display, the GPU and the device address to the container, and
+# start or stop it:
+#
+#   nepi_simulators_start gazebo|mujoco [share password]
+#   nepi_simulators_stop
+#   nepi_simulators_pull
+#   nepi_simulators_mount [share password]   (start does this for you)
+#   nepi_simulators_logs [docker logs args]
+#
+# One simulator runs at a time. Starting one while the other runs stops the
+# other first.
+#
+# nepi_simulators_bash_setup.sh copies this file to
+# ~/.nepi_simulators_bash_utils, pins NEPI_SIMULATORS_RESOURCES_FOLDER at the
+# end of that copy, and sources the copy from .bashrc. The scripts in
+# resources/docker source the in-repo original for the shared helpers below.
+#
+# Settings live in ~/.nepi_simulators_config, written by the bash setup.
+
+NEPI_SIMULATORS_BASH_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+export NEPI_SIMULATORS_BASH_FOLDER
+# Right when this is sourced from the repo. The ~/.nepi_simulators_bash_utils
+# copy appends a pinned export of the checkout's real path after this file.
+NEPI_SIMULATORS_RESOURCES_FOLDER=$(dirname "${NEPI_SIMULATORS_BASH_FOLDER}")
+export NEPI_SIMULATORS_RESOURCES_FOLDER
+
+NEPI_SIMULATORS_CONFIG_FILE=${HOME}/.nepi_simulators_config
+NEPI_SIMULATORS_CONTAINER=nepi_simulators
+NEPI_SIMULATORS_LICENSE_FILE=${HOME}/NEPI_SOFTWARE_LICENSE
+
+
+####################################
+# Shared helpers (used by the scripts in resources/docker)
+
+# Precedence: ~/.nepi_simulators_config, then the environment (for example a
+# NEPI_IP exported by nepi_setup's remote bash utils), then the defaults.
+function nepi_simulators_load_config(){
+    if [[ -f "$NEPI_SIMULATORS_CONFIG_FILE" ]]; then
+        source "$NEPI_SIMULATORS_CONFIG_FILE"
+    fi
+    NEPI_IP=${NEPI_IP:-192.168.179.103}
+    NEPI_USER=${NEPI_USER:-nepi}
+    NEPI_SIMULATORS_IMAGE=${NEPI_SIMULATORS_IMAGE:-numurusinc/nepi:nepi-sim-latest}
+    NEPI_SIMULATORS_SHARE=${NEPI_SIMULATORS_SHARE:-/mnt/nepi_share_storage}
+    NEPI_SIMULATORS_GPU=${NEPI_SIMULATORS_GPU:-auto}
+}
+
+
+function nepi_simulators_preflight(){
+    if [[ ! -f "$NEPI_SIMULATORS_LICENSE_FILE" ]]; then
+        echo "The Numurus Software License has not been accepted on this computer."
+        echo "Run nepi_simulators/scripts/nepi_simulators_setup.sh first."
+        return 1
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Docker is not installed. Run nepi_simulators/scripts/nepi_simulators_setup.sh first."
+        return 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "Cannot talk to the Docker daemon as $(id -un)."
+        echo "If setup just added you to the docker group, log out and back in"
+        echo "(or run: newgrp docker). Otherwise check: sudo systemctl status docker"
+        return 1
+    fi
+    return 0
+}
+
+
+# Prints which simulator the container runs, and succeeds, if it is running.
+function nepi_simulators_running(){
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$NEPI_SIMULATORS_CONTAINER" 2>/dev/null)" == "true" ]]; then
+        docker inspect -f '{{index .Config.Labels "nepi.simulator"}}' "$NEPI_SIMULATORS_CONTAINER" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+
+
+####################################
+# Commands
+
+# Mount the device's nepi_storage share at NEPI_SIMULATORS_SHARE, reusing a
+# mount that is already there. Same approach as the native
+# nepi_gazebo_mount_storage, plus file_mode/dir_mode 0775: the container's
+# user is uid 1000, which may not be yours, and it is given your group
+# (docker run --group-add) to write. The password reaches mount.cifs in its
+# PASSWD environment variable, never on a command line; without one,
+# mount.cifs prompts.
+function nepi_simulators_mount(){
+    local password=$1
+    nepi_simulators_load_config
+    local shdrive=$NEPI_SIMULATORS_SHARE
+    local shfolder=nepi_storage
+
+    if timeout 1 mountpoint -q "$shdrive"; then
+        return 0
+    fi
+    if ! command -v mount.cifs >/dev/null 2>&1; then
+        echo "mount.cifs is not installed (sudo apt install cifs-utils)"
+        return 1
+    fi
+    if [[ ! -d "$shdrive" ]]; then
+        echo "Creating mount folder: ${shdrive}"
+        sudo mkdir -p "$shdrive"
+    fi
+
+    local mount_opts
+    mount_opts="user=${NEPI_USER},uid=$(id -u),gid=$(id -g),file_mode=0775,dir_mode=0775"
+    echo "Mounting shared drive at: //${NEPI_IP}/${shfolder} to ${shdrive}"
+    if [[ -n "$password" ]]; then
+        PASSWD="$password" sudo --preserve-env=PASSWD mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
+    fi
+    if ! timeout 1 mountpoint -q "$shdrive"; then
+        sudo mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
+    fi
+
+    if timeout 1 mountpoint -q "$shdrive"; then
+        return 0
+    fi
+    echo "Failed to mount the NEPI storage share. Check that the device is reachable"
+    echo "(ping ${NEPI_IP}) and that TCP 445 is open from this computer to it."
+    return 1
+}
+
+
+function nepi_simulators_start(){
+    bash "${NEPI_SIMULATORS_RESOURCES_FOLDER}/docker/nepi_simulators_start.sh" "$@"
+}
+
+
+function nepi_simulators_stop(){
+    bash "${NEPI_SIMULATORS_RESOURCES_FOLDER}/docker/nepi_simulators_stop.sh" "$@"
+}
+
+
+function nepi_simulators_pull(){
+    bash "${NEPI_SIMULATORS_RESOURCES_FOLDER}/docker/nepi_simulators_pull.sh" "$@"
+}
+
+
+function nepi_simulators_logs(){
+    if ! docker inspect "$NEPI_SIMULATORS_CONTAINER" >/dev/null 2>&1; then
+        echo "No simulator container found"
+        return 1
+    fi
+    if [[ $# -eq 0 ]]; then
+        docker logs -f --tail 100 "$NEPI_SIMULATORS_CONTAINER"
+    else
+        docker logs "$@" "$NEPI_SIMULATORS_CONTAINER"
+    fi
+}
