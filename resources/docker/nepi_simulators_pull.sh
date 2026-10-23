@@ -18,7 +18,7 @@
 ##
 
 # Pull the NEPI simulator image (NEPI_SIMULATORS_IMAGE in
-# ~/.nepi_simulators_config, numurusinc/nepi:nepi-sim-latest by default).
+# ~/.nepi_simulators_config, numurusinc/nepi_simulations:latest by default).
 #
 # Usage: nepi_simulators_pull
 #

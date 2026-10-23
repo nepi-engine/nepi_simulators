@@ -62,7 +62,7 @@ function nepi_simulators_load_config(){
     fi
     NEPI_IP=${NEPI_IP:-192.168.179.103}
     NEPI_USER=${NEPI_USER:-nepi}
-    NEPI_SIMULATORS_IMAGE=${NEPI_SIMULATORS_IMAGE:-numurusinc/nepi:nepi-sim-latest}
+    NEPI_SIMULATORS_IMAGE=${NEPI_SIMULATORS_IMAGE:-numurusinc/nepi_simulations:latest}
     NEPI_SIMULATORS_SHARE=${NEPI_SIMULATORS_SHARE:-/mnt/nepi_share_storage}
     NEPI_SIMULATORS_GPU=${NEPI_SIMULATORS_GPU:-auto}
 }

@@ -67,7 +67,7 @@ echo ""
 if [[ -f "$CONFIG_FILE" ]]; then
     echo "Keeping existing ${CONFIG_FILE}"
 else
-    image=numurusinc/nepi:nepi-sim-latest
+    image=numurusinc/nepi_simulations:latest
     share=/mnt/nepi_share_storage
     gpu=auto
     default_ip=${NEPI_IP:-192.168.179.103}
