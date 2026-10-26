@@ -107,8 +107,10 @@ function nepi_simulators_running(){
 # user is uid 1000, which may not be yours, and it is given your group
 # (docker run --group-add) to write. The password reaches mount.cifs in its
 # PASSWD environment variable, never on a command line; without one,
-# mount.cifs prompts.
-function nepi_simulators_mount(){
+# mount.cifs prompts. Runs in a subshell, so the settings it loads (NEPI_IP,
+# NEPI_USER, ...) stay out of your shell, where nepi_setup's bash utils may
+# have its own NEPI_IP.
+function nepi_simulators_mount()(
     local password=$1
     nepi_simulators_load_config
     local shdrive=$NEPI_SIMULATORS_SHARE
@@ -142,7 +144,7 @@ function nepi_simulators_mount(){
     echo "Failed to mount the NEPI storage share. Check that the device is reachable"
     echo "(ping ${NEPI_IP}) and that TCP 445 is open from this computer to it."
     return 1
-}
+)
 
 
 function nepi_simulators_start(){

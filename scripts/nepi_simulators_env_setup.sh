@@ -118,10 +118,10 @@ if ! command -v docker &>/dev/null; then
 fi
 
 echo ""
-echo "Enabling Docker Service"
+echo "Starting Docker Service"
 sudo systemctl daemon-reload
-sudo systemctl enable --now docker.socket
-sudo systemctl enable --now docker
+sudo systemctl start docker.socket
+sudo systemctl start docker
 
 ####################################
 # What the nepi_simulators commands need besides Docker: mount.cifs to mount
