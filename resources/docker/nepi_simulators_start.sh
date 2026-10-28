@@ -173,6 +173,18 @@ if ! docker run "${run_args[@]}" "$NEPI_SIMULATORS_IMAGE" "$SIM" >/dev/null; the
     exit 1
 fi
 
+# The --group-add GIDs above have no names in the container, so a login shell
+# there (simslogin) warns "groups: cannot find name for group ID". Name the
+# unnamed ones after this computer's groups, prefixed host_.
+group_args=()
+for gid in $(docker inspect -f '{{join .HostConfig.GroupAdd " "}}' "$NEPI_SIMULATORS_CONTAINER"); do
+    name=$(getent group "$gid" | cut -d: -f1)
+    group_args+=("${gid}:host_${name:-$gid}")
+done
+docker exec -u root "$NEPI_SIMULATORS_CONTAINER" sh -c \
+    'for g; do getent group "${g%%:*}" >/dev/null || groupadd -g "${g%%:*}" "${g#*:}"; done' \
+    sh "${group_args[@]}" >/dev/null 2>&1
+
 waited=0
 while [[ $waited -lt 120 ]]; do
     if [[ "$(docker inspect -f '{{.State.Running}}' "$NEPI_SIMULATORS_CONTAINER" 2>/dev/null)" != "true" ]]; then

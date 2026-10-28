@@ -28,6 +28,7 @@
 #   nepi_simulators_pull
 #   nepi_simulators_mount [share password]   (start does this for you)
 #   nepi_simulators_logs [docker logs args]
+#   simslogin [user]
 #
 # One simulator runs at a time. Starting one while the other runs stops the
 # other first.
@@ -172,4 +173,22 @@ function nepi_simulators_logs(){
     else
         docker logs "$@" "$NEPI_SIMULATORS_CONTAINER"
     fi
+}
+
+
+# Open a shell in the running simulator container, as the image's user
+# (nepisim, which has passwordless sudo there) unless another is named.
+function simslogin(){
+    local login_user=$1
+    local sim
+    if ! sim=$(nepi_simulators_running); then
+        echo "No running simulator container to log into"
+        return 1
+    fi
+    local exec_args=(-it)
+    if [[ -n "$login_user" ]]; then
+        exec_args+=(-u "$login_user")
+    fi
+    echo "Logging into the running ${sim} simulator container${login_user:+ as ${login_user}}"
+    docker exec "${exec_args[@]}" "$NEPI_SIMULATORS_CONTAINER" /bin/bash
 }
